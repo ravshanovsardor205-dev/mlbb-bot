@@ -1035,6 +1035,46 @@ async def cmd_stats(message: types.Message):
         f"💬 Xabarlar: {messages[0]}\n"
         f"📢 E'lonlar: {announcements[0]}"
     )
+@dp.message(Command("users"))
+async def cmd_users(message: types.Message):
+    ADMIN_ID = 7509257102
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("❌ Faqat admin uchun!")
+        return
+    
+    try:
+        async with aiosqlite.connect(DB) as db:
+            cur = await db.execute("SELECT user_id, full_name, rank FROM users LIMIT 20")
+            users = await cur.fetchall()
+    except Exception as e:
+        await message.answer(f"❌ Xato: {e}")
+        return
+    
+    text = "👥 <b>FOYDALANUVCHILAR (Birinchi 20ta):</b>\n\n"
+    for user_id, fname, rank in users:
+        text += f"🔹 {fname or 'Anonim'} ({user_id})\n   Rank: {rank}\n"
+    
+    await message.answer(text, parse_mode="HTML")
+
+@dp.message(Command("backup"))
+async def cmd_backup(message: types.Message):
+    ADMIN_ID = 7509257102
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("❌ Faqat admin uchun!")
+        return
+    
+    try:
+        import shutil
+        backup_file = f"mlbb_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        shutil.copy(DB, backup_file)
+        
+        await message.answer(
+            f"✅ <b>BACKUP YARATILDI!</b>\n\n"
+            f"Fayl: {backup_file}",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await message.answer(f"❌ Xato: {e}")
 @dp.callback_query(F.data == "cancel")
 async def cb_cancel(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
