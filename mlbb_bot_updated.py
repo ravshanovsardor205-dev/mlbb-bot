@@ -989,7 +989,52 @@ async def cmd_help(message: types.Message, state: FSMContext):
         parse_mode="HTML",
         reply_markup=main_kb()
     )
+@dp.message(Command("admin"))
+async def cmd_admin(message: types.Message):
+    # Faqat admin uchun
+    ADMIN_ID = 7509257102  # Sizning Telegram ID
+    
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("❌ Faqat admin uchun!")
+        return
+    
+    await message.answer(
+        "🔧 ADMIN PANEL\n\n"
+        "/stats - Statistika\n"
+        "/users - Foydalanuvchilar\n"
+        "/backup - Backup"
+    )
 
+@dp.message(Command("stats"))
+async def cmd_stats(message: types.Message):
+    ADMIN_ID =  7509257102
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("❌ Faqat admin uchun!")
+        return
+    
+    try:
+        async with aiosqlite.connect(DB) as db:
+            # Foydalanuvchilar soni
+            cur = await db.execute("SELECT COUNT(*) FROM users")
+            users = await cur.fetchone()
+            
+            # Xabarlar soni
+            cur = await db.execute("SELECT COUNT(*) FROM messages")
+            messages = await cur.fetchone()
+            
+            # E'lonlar soni
+            cur = await db.execute("SELECT COUNT(*) FROM announcements")
+            announcements = await cur.fetchone()
+    except Exception as e:
+        await message.answer(f"❌ Xato: {e}")
+        return
+    
+    await message.answer(
+        f"📊 STATISTIKA\n\n"
+        f"👥 Foydalanuvchilar: {users[0]}\n"
+        f"💬 Xabarlar: {messages[0]}\n"
+        f"📢 E'lonlar: {announcements[0]}"
+    )
 @dp.callback_query(F.data == "cancel")
 async def cb_cancel(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
