@@ -1,6 +1,7 @@
 """
 MLBB Duo Finder Bot — PRODUCTION VERSION
 Railway-ga optimallashtirilgan
+Admin Panel + User Blocking + Blacklist
 pip install aiogram aiosqlite python-dotenv
 """
 import asyncio
@@ -104,6 +105,16 @@ async def init_db():
                     timestamp   DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS blacklist (
+                    blacklist_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id      INTEGER NOT NULL UNIQUE,
+                    reason       TEXT DEFAULT 'Noma\'lum',
+                    timestamp    DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
             await db.commit()
             logger.info("✅ Database initialized")
     except Exception as e:
@@ -279,6 +290,52 @@ async def get_announcements_by_rank_and_roles(rank: str, roles: list):
         return []
 
 # ─────────────────────────────────────────────
+#  BLACKLIST FUNCTIONS
+# ─────────────────────────────────────────────
+async def add_to_blacklist(user_id: int, reason: str = "Noma'lum"):
+    try:
+        async with aiosqlite.connect(DB) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO blacklist (user_id, reason) VALUES (?,?)",
+                (user_id, reason)
+            )
+            await db.commit()
+            logger.info(f"🔴 Blacklist-ga qo'shildi: [{user_id}] {reason}")
+            return True
+    except Exception as e:
+        logger.error(f"❌ add_to_blacklist error: {e}")
+        return False
+
+async def remove_from_blacklist(user_id: int):
+    try:
+        async with aiosqlite.connect(DB) as db:
+            await db.execute("DELETE FROM blacklist WHERE user_id=?", (user_id,))
+            await db.commit()
+            logger.info(f"🟢 Blacklist-dan o'chirildi: [{user_id}]")
+            return True
+    except Exception as e:
+        logger.error(f"❌ remove_from_blacklist error: {e}")
+        return False
+
+async def is_blacklisted(user_id: int):
+    try:
+        async with aiosqlite.connect(DB) as db:
+            cur = await db.execute("SELECT user_id FROM blacklist WHERE user_id=?", (user_id,))
+            return await cur.fetchone() is not None
+    except Exception as e:
+        logger.error(f"❌ is_blacklisted error: {e}")
+        return False
+
+async def get_blacklist():
+    try:
+        async with aiosqlite.connect(DB) as db:
+            cur = await db.execute("SELECT user_id, reason, timestamp FROM blacklist ORDER BY timestamp DESC")
+            return await cur.fetchall()
+    except Exception as e:
+        logger.error(f"❌ get_blacklist error: {e}")
+        return []
+
+# ─────────────────────────────────────────────
 #  HELPERS
 # ─────────────────────────────────────────────
 def is_profile_complete(rank: str, roles_str) -> bool:
@@ -440,11 +497,17 @@ async def send_profile(target: types.Message, user_id: int):
 # ─────────────────────────────────────────────
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    # BLACKLIST CHECK
+    if await is_blacklisted(user_id):
+        await message.answer("🔴 Sizni bloklangan! Bot-dan foydalana olmaysiz!")
+        return
+    
     await state.clear()
     
     uname = message.from_user.username or ""
     fname = message.from_user.full_name or ""
-    user_id = message.from_user.id
     
     await db_save(user_id, uname, fname)
     
@@ -989,40 +1052,46 @@ async def cmd_help(message: types.Message, state: FSMContext):
         parse_mode="HTML",
         reply_markup=main_kb()
     )
+
+@dp.message(F.text == "📞 Admin bilan bog'lanish")
+async def contact_admin(message: types.Message):
+    await message.answer("👨‍💻 Admin: @rSx_ravshanoff")
+
 @dp.message(Command("admin"))
 async def cmd_admin(message: types.Message):
-    # Faqat admin uchun
-    ADMIN_ID = 7509257102  # Sizning Telegram ID
+    ADMIN_ID = 7509257102
     
     if message.from_user.id != ADMIN_ID:
         await message.answer("❌ Faqat admin uchun!")
         return
     
     await message.answer(
-        "🔧 ADMIN PANEL\n\n"
+        "🔧 <b>ADMIN PANEL</b>\n\n"
         "/stats - Statistika\n"
         "/users - Foydalanuvchilar\n"
-        "/backup - Backup"
+        "/blacklist - Qora ro'yxat\n"
+        "/backup - Backup\n\n"
+        "<i>Foydalanuvchini bloklash:</i>\n"
+        "/block_USER_ID - Bloklash\n"
+        "/unblock_USER_ID - Bloklash-ni ochish",
+        parse_mode="HTML"
     )
 
 @dp.message(Command("stats"))
 async def cmd_stats(message: types.Message):
-    ADMIN_ID =  7509257102
+    ADMIN_ID = 7509257102
     if message.from_user.id != ADMIN_ID:
         await message.answer("❌ Faqat admin uchun!")
         return
     
     try:
         async with aiosqlite.connect(DB) as db:
-            # Foydalanuvchilar soni
             cur = await db.execute("SELECT COUNT(*) FROM users")
             users = await cur.fetchone()
             
-            # Xabarlar soni
             cur = await db.execute("SELECT COUNT(*) FROM messages")
             messages = await cur.fetchone()
             
-            # E'lonlar soni
             cur = await db.execute("SELECT COUNT(*) FROM announcements")
             announcements = await cur.fetchone()
     except Exception as e:
@@ -1035,8 +1104,9 @@ async def cmd_stats(message: types.Message):
         f"💬 Xabarlar: {messages[0]}\n"
         f"📢 E'lonlar: {announcements[0]}"
     )
+
 @dp.message(Command("users"))
-async def cmd_users(message: types.Message):
+async def cmd_users(message: types.Message, state: FSMContext):
     ADMIN_ID = 7509257102
     if message.from_user.id != ADMIN_ID:
         await message.answer("❌ Faqat admin uchun!")
@@ -1050,9 +1120,103 @@ async def cmd_users(message: types.Message):
         await message.answer(f"❌ Xato: {e}")
         return
     
+    if not users:
+        await message.answer("👥 Foydalanuvchi yo'q!")
+        return
+    
     text = "👥 <b>FOYDALANUVCHILAR (Birinchi 20ta):</b>\n\n"
+    
     for user_id, fname, rank in users:
-        text += f"🔹 {fname or 'Anonim'} ({user_id})\n   Rank: {rank}\n"
+        blacklisted = await is_blacklisted(user_id)
+        status = "🔴 BLOKLANGAN" if blacklisted else "🟢 AKTIV"
+        
+        text += f"🔹 {fname or 'Anonim'} ({user_id})\n"
+        text += f"   Rank: {rank} | {status}\n"
+        text += f"   /block_{user_id} - Bloklash\n"
+        text += f"   /unblock_{user_id} - Bloklash-ni ochish\n\n"
+    
+    await message.answer(text, parse_mode="HTML")
+
+@dp.message(Command("block_"))
+async def cmd_block(message: types.Message):
+    ADMIN_ID = 7509257102
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("❌ Faqat admin uchun!")
+        return
+    
+    try:
+        user_id = int(message.text.split("_")[1])
+    except:
+        await message.answer("❌ Noto'g'ri format! /block_USER_ID")
+        return
+    
+    user = await db_get(user_id)
+    if not user:
+        await message.answer("❌ Foydalanuvchi topilmadi!")
+        return
+    
+    success = await add_to_blacklist(user_id, "Admin tomonidan bloklandi")
+    
+    if success:
+        await message.answer(
+            f"🔴 <b>BLOKLANDI!</b>\n\n"
+            f"👤 {user[2]} ({user_id})\n"
+            f"Endi bu foydalanuvchi bot-dan foydalana olmaydi!",
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer("❌ Xato!")
+
+@dp.message(Command("unblock_"))
+async def cmd_unblock(message: types.Message):
+    ADMIN_ID = 7509257102
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("❌ Faqat admin uchun!")
+        return
+    
+    try:
+        user_id = int(message.text.split("_")[1])
+    except:
+        await message.answer("❌ Noto'g'ri format! /unblock_USER_ID")
+        return
+    
+    user = await db_get(user_id)
+    if not user:
+        await message.answer("❌ Foydalanuvchi topilmadi!")
+        return
+    
+    success = await remove_from_blacklist(user_id)
+    
+    if success:
+        await message.answer(
+            f"🟢 <b>BLOKLASH O'CHIRILDI!</b>\n\n"
+            f"👤 {user[2]} ({user_id})",
+            parse_mode="HTML"
+        )
+    else:
+        await message.answer("❌ Xato!")
+
+@dp.message(Command("blacklist"))
+async def cmd_blacklist(message: types.Message):
+    ADMIN_ID = 7509257102
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("❌ Faqat admin uchun!")
+        return
+    
+    blacklist = await get_blacklist()
+    
+    if not blacklist:
+        await message.answer("✅ Qora ro'yxat bo'sh!")
+        return
+    
+    text = "🔴 <b>QORA RO'YXAT:</b>\n\n"
+    for user_id, reason, timestamp in blacklist:
+        user = await db_get(user_id)
+        fname = user[2] if user else "O'chirilgan user"
+        text += f"🔹 {fname} ({user_id})\n"
+        text += f"   Sabab: {reason}\n"
+        text += f"   Vaqt: {timestamp}\n"
+        text += f"   /unblock_{user_id} - Ochish\n\n"
     
     await message.answer(text, parse_mode="HTML")
 
@@ -1075,9 +1239,7 @@ async def cmd_backup(message: types.Message):
         )
     except Exception as e:
         await message.answer(f"❌ Xato: {e}")
-@dp.message(F.text == "📞 Admin bilan bog'lanish")
-async def contact_admin(message: types.Message):
-    await message.answer("👨‍💻 Admin: @rSx_ravshanoff")
+
 @dp.callback_query(F.data == "cancel")
 async def cb_cancel(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
