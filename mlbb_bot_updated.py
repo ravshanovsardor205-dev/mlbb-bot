@@ -325,7 +325,7 @@ def main_kb():
         keyboard=[
             [KeyboardButton(text="👤 Profil"),     KeyboardButton(text="🔍 Sherik topish")],
             [KeyboardButton(text="📢 E'lon berish"),  KeyboardButton(text="💬 Xabarlar")],
-            [KeyboardButton(text="❓ Yordam")],
+            [KeyboardButton(text="❓ Yordam")],[KeyboardButton(text="📞 Admin bilan bog‘lanish")]
         ],
         resize_keyboard=True,
         input_field_placeholder="Buyruq tanlang..."
@@ -1095,7 +1095,9 @@ async def unknown(message: types.Message, state: FSMContext):
         "❓ Tanilmadi.",
         reply_markup=main_kb()
     )
-
+@dp.message_handler(lambda message: message.text == "📞 Admin bilan bog‘lanish")
+async def contact_admin(message: types.Message):
+    await message.answer("👨‍💻 Admin: @rSx_ravshanoff")
 # ─────────────────────────────────────────────
 #  MAIN
 # ─────────────────────────────────────────────
