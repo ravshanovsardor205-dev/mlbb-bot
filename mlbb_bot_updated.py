@@ -1095,7 +1095,7 @@ async def unknown(message: types.Message, state: FSMContext):
         "❓ Tanilmadi.",
         reply_markup=main_kb()
     )
-@dp.message_handler(lambda message: message.text == "📞 Admin bilan bog‘lanish")
+@dp.message(F.text == "📞 Admin bilan bog‘lanish")
 async def contact_admin(message: types.Message):
     await message.answer("👨‍💻 Admin: @rSx_ravshanoff")
 # ─────────────────────────────────────────────
