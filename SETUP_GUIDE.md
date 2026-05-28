@@ -52,7 +52,7 @@ cd mlbb-bot
 
 ```
 mlbb-bot/
-├── mlbb_bot_updated.py
+├── mlbb_bot.py
 ├── requirements.txt
 ├── .env
 ├── .env.example
@@ -64,7 +64,7 @@ mlbb-bot/
 ```
 
 **Quyidagi fayllarni yuklab oling:**
-- `mlbb_bot_updated.py` ← Bot kodi
+- `mlbb_bot.py` ← Bot kodi
 - `requirements.txt` ← Kutubxonalar
 - `.env` ← Token (RAHSIYA - Git-ga yuklash kerak emas!)
 - `.env.example` ← Template
@@ -80,7 +80,7 @@ mlbb-bot/
 ### `.env` faylni oching va token qo'ying:
 
 ```env
-BOT_TOKEN=8830561217:AAGfXR1HhpZMgvmeJW7DUaF2xdiby1j845c
+BOT_TOKEN=
 DATABASE=mlbb.db
 ```
 
@@ -211,7 +211,7 @@ Password: [token-ni paste qiling]
 3. Qo'shing:
 
 ```
-BOT_TOKEN = 8830561217:AAGfXR1HhpZMgvmeJW7DUaF2xdiby1j845c
+BOT_TOKEN = 
 DATABASE = mlbb.db
 ```
 

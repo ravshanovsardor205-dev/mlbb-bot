@@ -61,7 +61,7 @@ cp .env.example .env
 **`.env` faylini tahrirlang:**
 
 ```
-BOT_TOKEN=8830561217:AAGfXR1HhpZMgvmeJW7DUaF2xdiby1j845c
+BOT_TOKEN=
 ```
 
 > 🔐 **Eslab qoling:** Token-ni hech kunga jo'natmang!
@@ -149,7 +149,7 @@ Railway dashboard-da:
 3. Qo'shing:
 
 ```
-BOT_TOKEN = 8830561217:AAGfXR1HhpZMgvmeJW7DUaF2xdiby1j845c
+BOT_TOKEN = 
 ```
 
 4. **Save** bosing

@@ -56,7 +56,7 @@ git push -u origin main
 3. `mlbb-bot` tanlang
 4. **Deploy** bosing
 5. **Variables**:
-   - `BOT_TOKEN` = `8830561217:AAGfXR1HhpZMgvmeJW7DUaF2xdiby1j845c`
+   - `BOT_TOKEN` = 
    - `DATABASE` = `mlbb.db`
 
 ---
@@ -74,7 +74,7 @@ git push -u origin main
 `.env` faylni oching va yozing:
 
 ```
-BOT_TOKEN=8830561217:AAGfXR1HhpZMgvmeJW7DUaF2xdiby1j845c
+BOT_TOKEN=
 DATABASE=mlbb.db
 ```
 
