@@ -1,6 +1,7 @@
 """
 MLBB Duo Finder Bot - FULL PATCHED VERSION (Original style preserved)
 Railway optimized + Admin Panel + User Blocking + Blacklist + Characters + MLBB Info
++ /edit_char (Qahramonni tahrirlash) qo'shilgan
 
 Install:
 pip install aiogram aiosqlite python-dotenv
@@ -92,6 +93,13 @@ class Messaging(StatesGroup):
 
 
 class CharacterAdd(StatesGroup):
+    name = State()
+    role = State()
+    description = State()
+    video_url = State()
+
+
+class CharacterEdit(StatesGroup):
     name = State()
     role = State()
     description = State()
@@ -629,6 +637,33 @@ async def add_character(name: str, role: str, description: str, video_url: str =
             return True
     except Exception as e:
         logger.error(f"add_character error: {e}")
+        return False
+
+
+async def get_character_by_id(char_id: int):
+    try:
+        async with await connect_db() as db:
+            cur = await db.execute(
+                "SELECT char_id, name, role, description, video_url FROM characters WHERE char_id=?",
+                (char_id,),
+            )
+            return await cur.fetchone()
+    except Exception as e:
+        logger.error(f"get_character_by_id error: {e}")
+        return None
+
+
+async def update_character(char_id: int, name: str, role: str, description: str, video_url: str = ""):
+    try:
+        async with await connect_db() as db:
+            await db.execute(
+                "UPDATE characters SET name=?, role=?, description=?, video_url=? WHERE char_id=?",
+                (name, role, description, video_url, char_id),
+            )
+            await db.commit()
+            return True
+    except Exception as e:
+        logger.error(f"update_character error: {e}")
         return False
 
 
@@ -2062,6 +2097,7 @@ async def cmd_admin(message: types.Message):
         "/blacklist - Qora ro'yxat\n"
         "/backup - Backup\n"
         "/add_char - Qahramon qo'shish\n"
+        "/edit_char 123 - Qahramonni tahrirlash\n"
         "/del_char - Qahramon o'chirish\n"
         "/list_chars - Qahramonlar ro'yxati\n"
         "/block 123456 sabab - Bloklash\n"
@@ -2847,6 +2883,134 @@ async def char_video(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+# YANGI ADMIN FUNKSIYA: Qahramonni tahrirlash (/edit_char CHAR_ID)
+@dp.message(Command("edit_char"))
+async def cmd_edit_char(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("❌ Faqat admin uchun")
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        await message.answer("❌ Format: /edit_char CHAR_ID")
+        return
+
+    try:
+        char_id = int(parts[1])
+    except Exception:
+        await message.answer("❌ CHAR_ID noto'g'ri")
+        return
+
+    character = await get_character_by_id(char_id)
+    if not character:
+        await message.answer("❌ Qahramon topilmadi")
+        return
+
+    _, name, role, description, video_url = character
+    await state.update_data(
+        edit_char_id=char_id,
+        edit_old_name=name,
+        edit_old_role=role,
+        edit_old_description=description,
+        edit_old_video_url=video_url or "",
+    )
+    await state.set_state(CharacterEdit.name)
+    await message.answer(
+        f"✏️ Joriy nom: {html.escape(name)}\n"
+        "Yangi nomni kiriting (o'zgarmasa '-' yuboring):",
+        parse_mode="HTML",
+    )
+
+
+@dp.message(StateFilter(CharacterEdit.name))
+async def edit_char_name(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    old_name = data.get("edit_old_name", "")
+    new_name = (message.text or "").strip()
+    if not new_name:
+        await message.answer("❌ Nom bo'sh bo'lmasin")
+        return
+    if new_name == "-":
+        new_name = old_name
+
+    await state.update_data(edit_new_name=new_name)
+    await state.set_state(CharacterEdit.role)
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"{ro(r)} {r}", callback_data=f"char_edit_role:{r}") for r in ROLES[:2]],
+            [InlineKeyboardButton(text=f"{ro(r)} {r}", callback_data=f"char_edit_role:{r}") for r in ROLES[2:4]],
+            [InlineKeyboardButton(text=f"{ro(ROLES[4])} {ROLES[4]}", callback_data=f"char_edit_role:{ROLES[4]}")],
+            [InlineKeyboardButton(text="⏭ O'tkazib yuborish", callback_data="char_edit_role:skip")],
+        ]
+    )
+    await message.answer("🎮 Yangi rolni tanlang yoki o'tkazib yuboring:", reply_markup=kb)
+
+
+@dp.callback_query(StateFilter(CharacterEdit.role), F.data.startswith("char_edit_role:"))
+async def edit_char_role(call: types.CallbackQuery, state: FSMContext):
+    role = call.data.split(":", 1)[1]
+    data = await state.get_data()
+    if role == "skip":
+        role = data.get("edit_old_role", "Roamer")
+    elif role not in ROLES:
+        await call.answer("❌ Noto'g'ri rol", show_alert=True)
+        return
+
+    await state.update_data(edit_new_role=role)
+    await state.set_state(CharacterEdit.description)
+    await call.message.answer("📝 Yangi tavsifni kiriting (o'zgarmasa '-' yuboring):")
+    await call.answer()
+
+
+@dp.message(StateFilter(CharacterEdit.description))
+async def edit_char_description(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    old_description = data.get("edit_old_description", "")
+    description = (message.text or "").strip()
+    if not description:
+        await message.answer("❌ Tavsif bo'sh bo'lmasin")
+        return
+    if description == "-":
+        description = old_description
+
+    await state.update_data(edit_new_description=description)
+    await state.set_state(CharacterEdit.video_url)
+    await message.answer("🎥 Yangi video URL kiriting (/skip yoki '-' yuborsangiz eski qiymat qoladi):")
+
+
+@dp.message(StateFilter(CharacterEdit.video_url))
+async def edit_char_video_url(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    char_id = data.get("edit_char_id")
+    if not char_id:
+        await message.answer("❌ Session xatoligi")
+        await state.clear()
+        return
+
+    old_video = data.get("edit_old_video_url", "")
+    raw_video = (message.text or "").strip()
+    if raw_video in ("/skip", "-"):
+        video_url = old_video
+    else:
+        video_url = raw_video
+
+    ok = await update_character(
+        char_id=char_id,
+        name=data.get("edit_new_name", data.get("edit_old_name", "")),
+        role=data.get("edit_new_role", data.get("edit_old_role", "Roamer")),
+        description=data.get("edit_new_description", data.get("edit_old_description", "")),
+        video_url=video_url,
+    )
+    if not ok:
+        await message.answer("❌ Qahramonni yangilashda xato")
+        await state.clear()
+        return
+
+    await message.answer(f"✅ Qahramon yangilandi (ID: {char_id})")
+    await state.clear()
+
+
 @dp.message(Command("list_chars"))
 async def cmd_list_chars(message: types.Message):
     if message.from_user.id != ADMIN_ID:
@@ -2858,7 +3022,7 @@ async def cmd_list_chars(message: types.Message):
         return
     text = "🎮 <b>QAHRAMONLAR:</b>\n\n"
     for char_id, name, role, _, _ in characters:
-        text += f"🔹 <b>{html.escape(name)}</b> (ID: {char_id})\n   🎮 {role}\n   /del_char {char_id}\n\n"
+        text += f"🔹 <b>{html.escape(name)}</b> (ID: {char_id})\n   🎮 {role}\n   /edit_char {char_id}\n   /del_char {char_id}\n\n"
     await message.answer(text, parse_mode="HTML")
 
 
