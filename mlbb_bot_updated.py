@@ -38,6 +38,8 @@ load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN", "")
 DB = os.getenv("DATABASE", "/data/mlbb.db")
+MESSAGE_RETENTION_DAYS = int(os.getenv("MESSAGE_RETENTION_DAYS", "90"))
+CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL_HOURS", "24"))
 
 _raw_admins = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS = {int(x.strip()) for x in _raw_admins.split(",") if x.strip().isdigit()}
@@ -58,6 +60,7 @@ if not ADMIN_IDS:
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 ad_worker_task = None
+cleanup_worker_task = None
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -813,6 +816,30 @@ async def clear_user_messages(user_id: int):
         return False, 0
 
 
+async def cleanup_old_messages(retention_days: int | None = None):
+    """Very old chat historyni tozalab, DB hajmini nazoratda ushlab turadi."""
+    days = retention_days if retention_days is not None else MESSAGE_RETENTION_DAYS
+    try:
+        async with connect_db() as db:
+            cur = await db.execute(
+                "SELECT COUNT(*) FROM messages WHERE timestamp < datetime('now', ?)",
+                (f"-{max(1, int(days))} days",),
+            )
+            to_delete = int((await cur.fetchone())[0])
+            if to_delete > 0:
+                await db.execute(
+                    "DELETE FROM messages WHERE timestamp < datetime('now', ?)",
+                    (f"-{max(1, int(days))} days",),
+                )
+                # Disk space reclaim
+                await db.execute("VACUUM")
+                await db.commit()
+            return True, to_delete
+    except Exception as e:
+        logger.error(f"cleanup_old_messages error: {e}")
+        return False, 0
+
+
 # Required chats
 async def cleanup_expired_required_chats():
     async with connect_db() as db:
@@ -987,6 +1014,15 @@ async def ad_worker_loop():
         await asyncio.sleep(2)
 
 
+async def cleanup_worker_loop():
+    interval_seconds = max(1, CLEANUP_INTERVAL_HOURS) * 3600
+    while True:
+        ok, deleted = await cleanup_old_messages(MESSAGE_RETENTION_DAYS)
+        if ok and deleted > 0:
+            logger.info("🧹 Cleanup: %s ta eski message o'chirildi", deleted)
+        await asyncio.sleep(interval_seconds)
+
+
 # -------------------- Keyboards --------------------
 def main_kb():
     return ReplyKeyboardMarkup(
@@ -1085,19 +1121,32 @@ def admin_user_actions_kb(user_id: int):
 class SecurityMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         user = data.get("event_from_user") or getattr(event, "from_user", None)
+        callback = event if isinstance(event, types.CallbackQuery) else None
+        message = event if isinstance(event, types.Message) else None
+
+        # update-level middlewareda event odatda Update bo'ladi.
+        if isinstance(event, types.Update):
+            callback = event.callback_query
+            message = event.message
+            if not user:
+                if callback and callback.from_user:
+                    user = callback.from_user
+                elif message and message.from_user:
+                    user = message.from_user
+
         if user and not is_admin(user.id):
             await mark_user_activity(user)
             if await is_blacklisted(user.id):
                 try:
-                    if isinstance(event, types.CallbackQuery):
-                        await event.answer("Siz bloklangansiz", show_alert=True)
-                    elif hasattr(event, "answer"):
-                        await event.answer("🔴 Siz bloklangansiz")
+                    if callback:
+                        await callback.answer("Siz bloklangansiz", show_alert=True)
+                    elif message:
+                        await message.answer("🔴 Siz bloklangansiz")
                 except Exception:
                     pass
                 return
 
-            cb_data = event.data if isinstance(event, types.CallbackQuery) else None
+            cb_data = callback.data if callback else None
             if cb_data != "check_join_status":
                 missing = await get_missing_required_chats(user.id)
                 if missing:
@@ -1107,11 +1156,11 @@ class SecurityMiddleware(BaseMiddleware):
                     )
                     kb = required_join_kb(missing)
                     try:
-                        if isinstance(event, types.CallbackQuery):
-                            await event.answer("Avval required chatlarga qo'shiling", show_alert=True)
-                            await event.message.answer(text, parse_mode="HTML", reply_markup=kb)
-                        elif hasattr(event, "answer"):
-                            await event.answer(text, parse_mode="HTML", reply_markup=kb)
+                        if callback:
+                            await callback.answer("Avval required chatlarga qo'shiling", show_alert=True)
+                            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+                        elif message:
+                            await message.answer(text, parse_mode="HTML", reply_markup=kb)
                     except Exception:
                         pass
                     return
@@ -1567,14 +1616,33 @@ async def cmd_admin(message: types.Message):
         await message.answer("❌ Faqat admin uchun")
         return
     await message.answer(
-        "🔧 <b>ADMIN PANEL</b>\n\n"
-        "/stats\n/users\n/blacklist\n/block <id> [sabab]\n/unblock <id>\n"
-        "/admin_msg <id> <text>\n/audit_user <id>\n/announcement_history <id>\n"
-        "/add_char\n/list_chars\n/del_char <id>\n/backup\n\n"
-        "<b>Reklama</b>\n/set_ad KUN HH.MM.SS MATN\n/show_ad\n/ad_on\n/ad_off\n\n"
-        "<b>Majburiy obuna</b>\n/req_add CHAT_ID LINK KUN [NOM]\n/req_remove CHAT_ID\n/req_list\n/req_check USER_ID\n/get_chat_id\n/chat_id",
-        parse_mode="HTML",
-    )
+    "🔧 <b>ADMIN PANEL</b>\n\n"
+    "<code>/stats</code>\n"
+    "<code>/users</code>\n"
+    "<code>/blacklist</code>\n"
+    "<code>/block &lt;id&gt; [sabab]</code>\n"
+    "<code>/unblock &lt;id&gt;</code>\n"
+    "<code>/admin_msg &lt;id&gt; &lt;text&gt;</code>\n"
+    "<code>/audit_user &lt;id&gt;</code>\n"
+    "<code>/announcement_history &lt;id&gt;</code>\n"
+    "<code>/add_char</code>\n"
+    "<code>/list_chars</code>\n"
+    "<code>/del_char &lt;id&gt;</code>\n"
+    "<code>/backup</code>\n\n"
+    "<b>Reklama</b>\n"
+    "<code>/set_ad KUN HH.MM.SS MATN</code>\n"
+    "<code>/show_ad</code>\n"
+    "<code>/ad_on</code>\n"
+    "<code>/ad_off</code>\n\n"
+    "<b>Majburiy obuna</b>\n"
+    "<code>/req_add CHAT_ID LINK KUN [NOM]</code>\n"
+    "<code>/req_remove CHAT_ID</code>\n"
+    "<code>/req_list</code>\n"
+    "<code>/req_check USER_ID</code>\n"
+    "<code>/get_chat_id</code>\n"
+    "<code>/chat_id</code>",
+    parse_mode="HTML",
+)
 
 
 @dp.message(Command("stats"))
@@ -2164,10 +2232,11 @@ async def unknown_or_forward(message: types.Message, state: FSMContext):
 
 
 async def main():
-    global ad_worker_task
+    global ad_worker_task, cleanup_worker_task
     dp.update.outer_middleware(SecurityMiddleware())
     await init_db()
     ad_worker_task = asyncio.create_task(ad_worker_loop())
+    cleanup_worker_task = asyncio.create_task(cleanup_worker_loop())
     logger.info("Database initialized")
     logger.info("BOT ISHGA TUSHDI")
     try:
@@ -2175,6 +2244,8 @@ async def main():
     finally:
         if ad_worker_task:
             ad_worker_task.cancel()
+        if cleanup_worker_task:
+            cleanup_worker_task.cancel()
 
 
 if __name__ == "__main__":
