@@ -1,1 +1,1 @@
-worker: python mlbb_bot.py
+worker: python mlbb_bot_updated.py
